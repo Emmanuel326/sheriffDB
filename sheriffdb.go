@@ -1,7 +1,7 @@
 // Package sherifdb is a Bitcask-inspired, append-only key-value storage engine.
-// It guarantees durability, crash recovery, and single-writer safety
-// in a single file under 300 LOC.
-package main
+// It guarantees durability, crash recovery, single-writer safety, and
+// log compaction in a single file under 600 LOC.
+package sherifdb
 
 import (
 	"encoding/binary"
@@ -14,33 +14,26 @@ import (
 	"time"
 )
 
-// Errors
+//Errors
 
 var (
 	ErrNotFound     = errors.New("sherifdb: key not found")
-	ErrDeleted      = errors.New("sherifdb: key has been deleted")
 	ErrCorrupt      = errors.New("sherifdb: corrupt record detected")
 	ErrDatabaseOpen = errors.New("sherifdb: database already open")
 )
 
-// Constants
+//Constants
 
 const (
 	headerSize  = 20         // crc32(4) + timestamp(8) + kLen(4) + vLen(4)
 	tombstone   = ^uint32(0) // vLen == 0xFFFFFFFF marks a deleted key
 	hintExt     = ".hint"
 	lockExt     = ".lock"
+	compactExt  = ".compact"
 	scratchSize = 4096
 )
 
-// Record layout
-//
-//  [ crc32 | timestamp | kLen | vLen | key | value ]
-//    4 bytes  8 bytes   4 bytes 4 bytes
-//
-//  A tombstone record has vLen == 0xFFFFFFFF and no value bytes.
-
-// Meta & KeyDir
+//Meta&KeyDir
 
 type meta struct {
 	offset int64
@@ -73,7 +66,7 @@ func (kd *keyDir) delete(key string) {
 	kd.mu.Unlock()
 }
 
-// DB
+//DB
 
 // DB is the public handle to a SherifDB database.
 // All methods are safe for concurrent use.
@@ -113,9 +106,11 @@ func Open(path string) (*DB, error) {
 		path:    path,
 	}
 
-	if err := db.restore(); err != nil {
-		db.closeFiles()
-		return nil, fmt.Errorf("sherifdb: restore: %w", err)
+	if err := db.restoreFromHint(); err != nil {
+		if err = db.restoreFromLog(); err != nil {
+			db.closeFiles()
+			return nil, fmt.Errorf("sherifdb: restore: %w", err)
+		}
 	}
 
 	return db, nil
@@ -206,7 +201,7 @@ func (db *DB) Close() error {
 	return db.closeFiles()
 }
 
-//   Internal: Write
+// Internal: Write
 
 func (db *DB) writeRecord(key, value []byte) (offset int64, size uint32, err error) {
 	kLen := uint32(len(key))
@@ -271,14 +266,6 @@ func (db *DB) growScratch(n uint32) []byte {
 }
 
 // Internal: Restore
-
-// restore rebuilds the keydir from hint file (fast) or log (safe fallback).
-func (db *DB) restore() error {
-	if err := db.restoreFromHint(); err == nil {
-		return nil
-	}
-	return db.restoreFromLog()
-}
 
 // restoreFromLog replays the data file, verifying each record's CRC.
 // On a torn write at the tail, it truncates to the last good offset.
@@ -399,7 +386,89 @@ func (db *DB) restoreFromHint() error {
 	}
 }
 
-//  Internal: Lifecycle
+//Compact
+
+// Compact rewrites the data file keeping only the latest live record per key.
+// Dead records (overwrites, tombstones) are dropped, reclaiming disk space.
+// Safe to call at any time. Blocks reads and writes for its duration.
+func (db *DB) Compact() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	tmp := db.path + compactExt
+	cf, err := os.OpenFile(tmp, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("sherifdb: compact create: %w", err)
+	}
+
+	// Take a snapshot of live keys under the index lock
+	db.index.mu.RLock()
+	snap := make(map[string]meta, len(db.index.table))
+	for k, m := range db.index.table {
+		snap[k] = m
+	}
+	db.index.mu.RUnlock()
+
+	// Write each live record into the compact file, track new offsets
+	newIndex := make(map[string]meta, len(snap))
+	var cursor int64
+
+	for k, m := range snap {
+		rec := make([]byte, m.size)
+		if _, err := db.file.ReadAt(rec, m.offset); err != nil {
+			cf.Close()
+			os.Remove(tmp)
+			return fmt.Errorf("sherifdb: compact read: %w", err)
+		}
+
+		// Verify CRC before copying — skip silently corrupt records
+		stored := binary.LittleEndian.Uint32(rec[0:4])
+		if crc32.ChecksumIEEE(rec[4:]) != stored {
+			continue
+		}
+
+		if _, err := cf.Write(rec); err != nil {
+			cf.Close()
+			os.Remove(tmp)
+			return fmt.Errorf("sherifdb: compact write: %w", err)
+		}
+
+		newIndex[k] = meta{offset: cursor, size: m.size}
+		cursor += int64(m.size)
+	}
+
+	if err := cf.Sync(); err != nil {
+		cf.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("sherifdb: compact fsync: %w", err)
+	}
+	cf.Close()
+
+	// Atomic swap: rename compact file over the data file
+	if err := db.file.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("sherifdb: compact close old: %w", err)
+	}
+	if err := os.Rename(tmp, db.path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("sherifdb: compact rename: %w", err)
+	}
+
+	// Reopen the data file
+	db.file, err = os.OpenFile(db.path, os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("sherifdb: compact reopen: %w", err)
+	}
+
+	db.index.mu.Lock()
+	db.index.table = newIndex
+	db.index.mu.Unlock()
+
+	// Rewrite hint file to match the compacted log
+	return db.writeHint()
+}
+
+// Internal: Lifecycle
 
 func (db *DB) closeFiles() error {
 	var errs []error
