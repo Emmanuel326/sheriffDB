@@ -1,7 +1,7 @@
 // Package sherifdb is a Bitcask-inspired, append-only key-value storage engine.
 // It guarantees durability, crash recovery, single-writer safety, and
 // log compaction in a single file under 600 LOC.
-package sherifdb
+package main
 
 import (
 	"encoding/binary"

@@ -1,7 +1,7 @@
 # SherifDB 🕵️
 
 A Bitcask-inspired, append-only key-value storage engine in Go.  
-Single file. Under 420 LOC. Bulletproof.
+Single file. Under 500 LOC. Bulletproof.
 
 ## Design
 
@@ -30,6 +30,7 @@ defer db.Close()
 db.Set([]byte("key"), []byte("value"))
 val, err := db.Get([]byte("key"))
 err = db.Delete([]byte("key"))
+err = db.Compact()
 ```
 
 That's it.
@@ -65,8 +66,8 @@ my.db.lock  → exclusive lock (deleted on close)
 
 | Metric | Value |
 |---|---|
-| Engine LOC | 419 |
-| Public API surface | 5 functions |
+| Engine LOC | 488 |
+| Public API surface | 6 functions |
 | Dependencies | stdlib only |
 
 ## License
