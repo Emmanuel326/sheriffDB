@@ -1,4 +1,4 @@
-module github.com/Emmanuel326/sherifdb
+module github.com/Emmanuel326/sheriffdb
 
 go 1.26.2
 

@@ -1,4 +1,4 @@
-// Package sherifdb is a Bitcask-inspired, append-only key-value storage engine.
+// Package sheriffdb is a Bitcask-inspired, append-only key-value storage engine.
 // It guarantees durability, crash recovery, single-writer safety, and
 // log compaction in a single file under 600 LOC.
 package main
@@ -17,9 +17,9 @@ import (
 //Errors
 
 var (
-	ErrNotFound     = errors.New("sherifdb: key not found")
-	ErrCorrupt      = errors.New("sherifdb: corrupt record detected")
-	ErrDatabaseOpen = errors.New("sherifdb: database already open")
+	ErrNotFound     = errors.New("sheriffdb: key not found")
+	ErrCorrupt      = errors.New("sheriffdb: corrupt record detected")
+	ErrDatabaseOpen = errors.New("sheriffdb: database already open")
 )
 
 //Constants
@@ -68,7 +68,7 @@ func (kd *keyDir) delete(key string) {
 
 //DB
 
-// DB is the public handle to a SherifDB database.
+// DB is the public handle to a SheriffDB database.
 // All methods are safe for concurrent use.
 type DB struct {
 	mu      sync.Mutex
@@ -88,14 +88,14 @@ func Open(path string) (*DB, error) {
 		if os.IsExist(err) {
 			return nil, ErrDatabaseOpen
 		}
-		return nil, fmt.Errorf("sherifdb: acquire lock: %w", err)
+		return nil, fmt.Errorf("sheriffdb: acquire lock: %w", err)
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		lf.Close()
 		os.Remove(path + lockExt)
-		return nil, fmt.Errorf("sherifdb: open data file: %w", err)
+		return nil, fmt.Errorf("sheriffdb: open data file: %w", err)
 	}
 
 	db := &DB{
@@ -109,7 +109,7 @@ func Open(path string) (*DB, error) {
 	if err := db.restoreFromHint(); err != nil {
 		if err = db.restoreFromLog(); err != nil {
 			db.closeFiles()
-			return nil, fmt.Errorf("sherifdb: restore: %w", err)
+			return nil, fmt.Errorf("sheriffdb: restore: %w", err)
 		}
 	}
 
@@ -119,7 +119,7 @@ func Open(path string) (*DB, error) {
 // Set writes key→value, overwriting any previous value.
 func (db *DB) Set(key, value []byte) error {
 	if len(key) == 0 {
-		return errors.New("sherifdb: key must not be empty")
+		return errors.New("sheriffdb: key must not be empty")
 	}
 
 	db.mu.Lock()
@@ -148,7 +148,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	// Read the full record from disk
 	rec := make([]byte, m.size)
 	if _, err := db.file.ReadAt(rec, m.offset); err != nil {
-		return nil, fmt.Errorf("sherifdb: read: %w", err)
+		return nil, fmt.Errorf("sheriffdb: read: %w", err)
 	}
 
 	// Verify CRC
@@ -195,7 +195,7 @@ func (db *DB) Close() error {
 
 	if err := db.writeHint(); err != nil {
 		// Non-fatal: next open will restore from the log
-		fmt.Fprintf(os.Stderr, "sherifdb: write hint: %v\n", err)
+		fmt.Fprintf(os.Stderr, "sheriffdb: write hint: %v\n", err)
 	}
 
 	return db.closeFiles()
@@ -243,15 +243,15 @@ func (db *DB) writeTombstone(key []byte) (offset int64, size uint32, err error) 
 func (db *DB) append(data []byte) (offset int64, size uint32, err error) {
 	offset, err = db.file.Seek(0, io.SeekEnd)
 	if err != nil {
-		return 0, 0, fmt.Errorf("sherifdb: seek: %w", err)
+		return 0, 0, fmt.Errorf("sheriffdb: seek: %w", err)
 	}
 
 	if _, err = db.file.Write(data); err != nil {
-		return 0, 0, fmt.Errorf("sherifdb: write: %w", err)
+		return 0, 0, fmt.Errorf("sheriffdb: write: %w", err)
 	}
 
 	if err = db.file.Sync(); err != nil {
-		return 0, 0, fmt.Errorf("sherifdb: fsync: %w", err)
+		return 0, 0, fmt.Errorf("sheriffdb: fsync: %w", err)
 	}
 
 	return offset, uint32(len(data)), nil
@@ -398,7 +398,7 @@ func (db *DB) Compact() error {
 	tmp := db.path + compactExt
 	cf, err := os.OpenFile(tmp, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
-		return fmt.Errorf("sherifdb: compact create: %w", err)
+		return fmt.Errorf("sheriffdb: compact create: %w", err)
 	}
 
 	// Take a snapshot of live keys under the index lock
@@ -418,7 +418,7 @@ func (db *DB) Compact() error {
 		if _, err := db.file.ReadAt(rec, m.offset); err != nil {
 			cf.Close()
 			os.Remove(tmp)
-			return fmt.Errorf("sherifdb: compact read: %w", err)
+			return fmt.Errorf("sheriffdb: compact read: %w", err)
 		}
 
 		// Verify CRC before copying — skip silently corrupt records
@@ -430,7 +430,7 @@ func (db *DB) Compact() error {
 		if _, err := cf.Write(rec); err != nil {
 			cf.Close()
 			os.Remove(tmp)
-			return fmt.Errorf("sherifdb: compact write: %w", err)
+			return fmt.Errorf("sheriffdb: compact write: %w", err)
 		}
 
 		newIndex[k] = meta{offset: cursor, size: m.size}
@@ -440,24 +440,24 @@ func (db *DB) Compact() error {
 	if err := cf.Sync(); err != nil {
 		cf.Close()
 		os.Remove(tmp)
-		return fmt.Errorf("sherifdb: compact fsync: %w", err)
+		return fmt.Errorf("sheriffdb: compact fsync: %w", err)
 	}
 	cf.Close()
 
 	// Atomic swap: rename compact file over the data file
 	if err := db.file.Close(); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("sherifdb: compact close old: %w", err)
+		return fmt.Errorf("sheriffdb: compact close old: %w", err)
 	}
 	if err := os.Rename(tmp, db.path); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("sherifdb: compact rename: %w", err)
+		return fmt.Errorf("sheriffdb: compact rename: %w", err)
 	}
 
 	// Reopen the data file
 	db.file, err = os.OpenFile(db.path, os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("sherifdb: compact reopen: %w", err)
+		return fmt.Errorf("sheriffdb: compact reopen: %w", err)
 	}
 
 	db.index.mu.Lock()
@@ -482,7 +482,7 @@ func (db *DB) closeFiles() error {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("sherifdb: close: %v", errs)
+		return fmt.Errorf("sheriffdb: close: %v", errs)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-# SherifDB 🕵️
+# SheriffDB 🕵️
 
 A Bitcask-inspired, append-only key-value storage engine in Go.  
 Single file. Under 500 LOC. Bulletproof.
@@ -40,7 +40,7 @@ That's it.
 ```go
 import "github.com/Emmanuel326/sheriffDB"
 
-db, err := sherifdb.Open("my.db")
+db, err := sheriffdb.Open("my.db")
 if err != nil {
     log.Fatal(err)
 }
